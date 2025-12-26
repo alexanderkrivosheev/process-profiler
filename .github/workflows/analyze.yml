@@ -20,21 +20,17 @@ jobs:
             echo "PID must be a number. Got: '$PID'"
             exit 1
           fi
-          echo "PID is valid: $PID"
 
-      - name: Call proc API (send PID and wait for response)
+      - name: Call proc API
         id: call_api
         env:
           API_TOKEN: ${{ secrets.PROC_API_TOKEN }}
           PID: ${{ inputs.pid }}
         run: |
-          set -euo pipefail
+          set +e
 
           URL="https://proc.mydomain.com/analysy"
           BODY=$(jq -n --arg pid "$PID" '{ pid: ($pid|tonumber) }')
-
-          echo "POST $URL"
-          echo "Request body: $BODY"
 
           HTTP_RESPONSE=$(curl -sS -X POST "$URL" \
             -H "Content-Type: application/json" \
@@ -45,34 +41,28 @@ jobs:
           HTTP_BODY="$(echo "$HTTP_RESPONSE" | head -n -1)"
           HTTP_CODE="$(echo "$HTTP_RESPONSE" | tail -n 1)"
 
-          echo "HTTP code: $HTTP_CODE"
-          echo "Response body:"
-          echo "$HTTP_BODY"
-
-          if [[ ! "$HTTP_CODE" =~ ^2 ]]; then
-            echo "API request failed with HTTP $HTTP_CODE"
-            exit 1
-          fi
-
           {
-            echo "response<<EOF"
+            echo "body<<EOF"
             echo "$HTTP_BODY"
             echo "EOF"
+            echo "code=$HTTP_CODE"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Use response
-        run: |
-          echo "=== API RESULT ==="
-          echo '${{ steps.call_api.outputs.response }}'
 
       - name: Write report to Summary
         if: always()
         run: |
-          echo "## Process analysis result" >> "$GITHUB_STEP_SUMMARY"
+          echo "## 🧪 Process Analysis Report" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "**PID:** ${{ inputs.pid }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**HTTP Status:** ${{ steps.call_api.outputs.code }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### API response" >> "$GITHUB_STEP_SUMMARY"
+          echo "### API Response" >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          echo '${{ steps.call_api.outputs.response }}' >> "$GITHUB_STEP_SUMMARY"
+          echo '${{ steps.call_api.outputs.body }}' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail job if API failed
+        if: ${{ steps.call_api.outputs.code && !startsWith(steps.call_api.outputs.code, '2') }}
+        run: |
+          echo "API returned HTTP ${{ steps.call_api.outputs.code }}"
+          exit 1
