@@ -42,7 +42,6 @@ jobs:
             -d "$BODY" \
             -w "\n%{http_code}")
 
-          # Разделим тело и код ответа
           HTTP_BODY="$(echo "$HTTP_RESPONSE" | head -n -1)"
           HTTP_CODE="$(echo "$HTTP_RESPONSE" | tail -n 1)"
 
@@ -50,13 +49,11 @@ jobs:
           echo "Response body:"
           echo "$HTTP_BODY"
 
-          # Провалим job, если код не 2xx
           if [[ ! "$HTTP_CODE" =~ ^2 ]]; then
             echo "API request failed with HTTP $HTTP_CODE"
             exit 1
           fi
 
-          # Сохраним body как output (для следующих шагов)
           {
             echo "response<<EOF"
             echo "$HTTP_BODY"
@@ -67,3 +64,15 @@ jobs:
         run: |
           echo "=== API RESULT ==="
           echo '${{ steps.call_api.outputs.response }}'
+
+      - name: Write report to Summary
+        if: always()
+        run: |
+          echo "## Process analysis result" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**PID:** ${{ inputs.pid }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### API response" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          echo '${{ steps.call_api.outputs.response }}' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
