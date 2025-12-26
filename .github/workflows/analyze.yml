@@ -1,0 +1,69 @@
+name: Analyze process by PID
+
+on:
+  workflow_dispatch:
+    inputs:
+      pid:
+        description: "Process ID (PID) to analyze"
+        required: true
+        type: string
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate PID
+        run: |
+          PID="${{ inputs.pid }}"
+          if ! [[ "$PID" =~ ^[0-9]+$ ]]; then
+            echo "PID must be a number. Got: '$PID'"
+            exit 1
+          fi
+          echo "PID is valid: $PID"
+
+      - name: Call proc API (send PID and wait for response)
+        id: call_api
+        env:
+          API_TOKEN: ${{ secrets.PROC_API_TOKEN }}
+          PID: ${{ inputs.pid }}
+        run: |
+          set -euo pipefail
+
+          URL="https://proc.mydomain.com/analysy"
+          BODY=$(jq -n --arg pid "$PID" '{ pid: ($pid|tonumber) }')
+
+          echo "POST $URL"
+          echo "Request body: $BODY"
+
+          HTTP_RESPONSE=$(curl -sS -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${API_TOKEN}" \
+            -d "$BODY" \
+            -w "\n%{http_code}")
+
+          # Разделим тело и код ответа
+          HTTP_BODY="$(echo "$HTTP_RESPONSE" | head -n -1)"
+          HTTP_CODE="$(echo "$HTTP_RESPONSE" | tail -n 1)"
+
+          echo "HTTP code: $HTTP_CODE"
+          echo "Response body:"
+          echo "$HTTP_BODY"
+
+          # Провалим job, если код не 2xx
+          if [[ ! "$HTTP_CODE" =~ ^2 ]]; then
+            echo "API request failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+          # Сохраним body как output (для следующих шагов)
+          {
+            echo "response<<EOF"
+            echo "$HTTP_BODY"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Use response
+        run: |
+          echo "=== API RESULT ==="
+          echo '${{ steps.call_api.outputs.response }}'
