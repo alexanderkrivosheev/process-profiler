@@ -15,7 +15,7 @@ on:
       base_url:
         description: "DumpAgent base URL"
         required: true
-        default: "http://YOUR-SERVER-IP:5057"
+        default: "https://62ba8ea7fd8f.ngrok-free.app"
         type: string
 
 jobs:
