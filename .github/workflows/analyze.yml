@@ -15,7 +15,7 @@ on:
       base_url:
         description: "DumpAgent base URL (must be reachable from runner)"
         required: false
-        default: "http://127.0.0.1:5057"
+        default: "https://62ba8ea7fd8f.ngrok-free.app"
         type: string
 
 jobs:
