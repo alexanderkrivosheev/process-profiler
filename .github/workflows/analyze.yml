@@ -13,144 +13,107 @@ on:
         default: ""
         type: string
       base_url:
-        description: "DumpAgent base URL (must be reachable from runner)"
-        required: false
-        default: "https://62ba8ea7fd8f.ngrok-free.app"
+        description: "DumpAgent base URL"
+        required: true
+        default: "http://YOUR-SERVER-IP:5057"
         type: string
 
 jobs:
   dump_analyze_ai:
-    # РЕКОМЕНДУЮ: self-hosted runner рядом с сервисом
-    # Пример: runs-on: [self-hosted, windows, dumpagent]
-    runs-on: self-hosted
-
-    env:
-      BASE_URL: ${{ inputs.base_url }}
-      PID: ${{ inputs.pid }}
-      NOTES: ${{ inputs.notes }}
-
-      # Если нужен токен/ключ — добавьте секрет и включите заголовок ниже (см. CURL_HEADERS)
-      # DUMPAGENT_TOKEN: ${{ secrets.DUMPAGENT_TOKEN }}
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Check tools (curl + jq)
-        shell: bash
-        run: |
-          set -e
-          curl --version
-          jq --version
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Step 1 - Create dump
+      - name: Step 1 — Create Dump
         id: dump
-        shell: bash
         run: |
-          set -euo pipefail
+          echo "Calling /dump..."
+          RESPONSE=$(curl -s -X POST "${{ inputs.base_url }}/dump" \
+            -H "Content-Type: application/json" \
+            -d "{\"pid\":${{ inputs.pid }}}")
 
-          # Если нужен auth:
-          # CURL_HEADERS=(-H "Content-Type: application/json" -H "Authorization: Bearer $DUMPAGENT_TOKEN")
-          CURL_HEADERS=(-H "Content-Type: application/json")
+          echo "$RESPONSE" | jq .
 
-          echo "Calling: ${BASE_URL}/dump for PID=${PID}"
-          RESP="$(curl -sS -X POST "${BASE_URL}/dump" \
-            "${CURL_HEADERS[@]}" \
-            --data "{\"pid\":${PID}}")"
-
-          echo "$RESP" | jq .
-
-          OK="$(echo "$RESP" | jq -r '.ok')"
-          if [ "$OK" != "true" ]; then
-            echo "Dump step failed"
+          if [[ $(echo "$RESPONSE" | jq -r '.ok') != "true" ]]; then
+            echo "❌ Dump step failed"
             exit 1
           fi
 
-          DUMP_PATH="$(echo "$RESP" | jq -r '.dumpPath')"
-          echo "dumpPath=$DUMP_PATH" >> "$GITHUB_OUTPUT"
+          DUMP_PATH=$(echo "$RESPONSE" | jq -r '.dumpPath')
+          echo "dumpPath=$DUMP_PATH" >> $GITHUB_OUTPUT
 
-      - name: Step 2 - Analyze dump
+      - name: Step 2 — Analyze Dump
         id: analyze
-        shell: bash
         run: |
-          set -euo pipefail
+          echo "Calling /analyze..."
+          RESPONSE=$(curl -s -X POST "${{ inputs.base_url }}/analyze" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg path "${{ steps.dump.outputs.dumpPath }}" \
+              --arg notes "${{ inputs.notes }}" \
+              '{dumpPath:$path, notes:$notes}')")
 
-          CURL_HEADERS=(-H "Content-Type: application/json")
+          echo "$RESPONSE" | jq .
 
-          DUMP_PATH="${{ steps.dump.outputs.dumpPath }}"
-          echo "Calling: ${BASE_URL}/analyze"
-          RESP="$(curl -sS -X POST "${BASE_URL}/analyze" \
-            "${CURL_HEADERS[@]}" \
-            --data "$(jq -nc --arg dumpPath "$DUMP_PATH" --arg notes "$NOTES" \
-              '{dumpPath:$dumpPath, notes:$notes}')")"
-
-          echo "$RESP" | jq .
-
-          OK="$(echo "$RESP" | jq -r '.ok')"
-          if [ "$OK" != "true" ]; then
-            echo "Analyze step failed"
+          if [[ $(echo "$RESPONSE" | jq -r '.ok') != "true" ]]; then
+            echo "❌ Analyze step failed"
             exit 1
           fi
 
-          REPORT_PATH="$(echo "$RESP" | jq -r '.reportPath')"
-          EXIT_CODE="$(echo "$RESP" | jq -r '.exitCode')"
+          REPORT_PATH=$(echo "$RESPONSE" | jq -r '.reportPath')
+          EXIT_CODE=$(echo "$RESPONSE" | jq -r '.exitCode')
 
-          echo "reportPath=$REPORT_PATH" >> "$GITHUB_OUTPUT"
-          echo "exitCode=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          echo "reportPath=$REPORT_PATH" >> $GITHUB_OUTPUT
 
-          if [ "$EXIT_CODE" != "0" ]; then
-            echo "Analyze exitCode=$EXIT_CODE (failing job)"
+          if [[ "$EXIT_CODE" != "0" ]]; then
+            echo "❌ Analyze returned exitCode=$EXIT_CODE"
             exit 1
           fi
 
-      - name: Step 3 - AI review
+      - name: Step 3 — AI Review
         id: ai
-        shell: bash
         run: |
-          set -euo pipefail
+          echo "Calling /ai-review..."
+          RESPONSE=$(curl -s -X POST "${{ inputs.base_url }}/ai-review" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg path "${{ steps.analyze.outputs.reportPath }}" \
+              --arg notes "${{ inputs.notes }}" \
+              '{reportPath:$path, notes:$notes}')")
 
-          CURL_HEADERS=(-H "Content-Type: application/json")
+          echo "$RESPONSE" | jq .
 
-          REPORT_PATH="${{ steps.analyze.outputs.reportPath }}"
-          echo "Calling: ${BASE_URL}/ai-review"
-          RESP="$(curl -sS -X POST "${BASE_URL}/ai-review" \
-            "${CURL_HEADERS[@]}" \
-            --data "$(jq -nc --arg reportPath "$REPORT_PATH" --arg notes "$NOTES" \
-              '{reportPath:$reportPath, notes:$notes}')")"
-
-          echo "$RESP" | jq .
-
-          OK="$(echo "$RESP" | jq -r '.ok')"
-          if [ "$OK" != "true" ]; then
-            echo "AI review step failed"
+          if [[ $(echo "$RESPONSE" | jq -r '.ok') != "true" ]]; then
+            echo "❌ AI step failed"
             exit 1
           fi
 
-          AI_REPORT_PATH="$(echo "$RESP" | jq -r '.aiReportPath')"
-          AI_TEXT="$(echo "$RESP" | jq -r '.aiText')"
+          AI_TEXT=$(echo "$RESPONSE" | jq -r '.aiText')
+          AI_REPORT_PATH=$(echo "$RESPONSE" | jq -r '.aiReportPath')
 
-          echo "aiReportPath=$AI_REPORT_PATH" >> "$GITHUB_OUTPUT"
-
-          # Сохраним AI текст в файл для артефакта
           mkdir -p out
-          printf "%s\n" "$AI_TEXT" > out/ai_summary.txt
+          echo "$AI_TEXT" > out/ai_summary.txt
 
-      - name: Write Job Summary (AI result)
-        shell: bash
+          echo "aiReportPath=$AI_REPORT_PATH" >> $GITHUB_OUTPUT
+
+      - name: 🧠 Write Summary
         run: |
-          set -euo pipefail
-          echo "## Dump/Analyze/AI results" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "**PID:** $PID  " >> "$GITHUB_STEP_SUMMARY"
-          echo "**DumpPath:** \`${{ steps.dump.outputs.dumpPath }}\`  " >> "$GITHUB_STEP_SUMMARY"
-          echo "**ReportPath:** \`${{ steps.analyze.outputs.reportPath }}\`  " >> "$GITHUB_STEP_SUMMARY"
-          echo "**AIReportPath:** \`${{ steps.ai.outputs.aiReportPath }}\`  " >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### AI Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          cat out/ai_summary.txt >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "## 🧪 Dump Analysis Pipeline" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**PID:** ${{ inputs.pid }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Dump:** \`${{ steps.dump.outputs.dumpPath }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Report:** \`${{ steps.analyze.outputs.reportPath }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**AI Report:** \`${{ steps.ai.outputs.aiReportPath }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🧠 AI Summary" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat out/ai_summary.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
-      - name: Upload artifacts (AI summary)
+      - name: 📦 Upload AI Summary
         uses: actions/upload-artifact@v4
         with:
-          name: dump-ai-output
+          name: dump-ai-summary
           path: out/ai_summary.txt
