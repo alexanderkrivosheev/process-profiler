@@ -15,7 +15,7 @@ on:
       base_url:
         description: "DumpAgent base URL"
         required: true
-        default: "https://62ba8ea7fd8f.ngrok-free.app"
+        default: "https://80394491a97a.ngrok-free.app"
         type: string
 
 jobs:
